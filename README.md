@@ -27,7 +27,7 @@ one session read as a conversation, one call and the firewall finding on it, in 
 **Animated explainer:** [explainers/index.html](explainers/index.html) · [published](https://claude.ai/artifact/PezDkCy9QLtZon76eJiGnT)
 
 ## What it is
-Your LLM proxy (e.g. [llm-proxy-log](../llm-proxy-log/) or [llm-proxy-firewall](../llm-proxy-firewall/))
+Your LLM proxy (e.g. [llm-proxy-log](https://github.com/claudiucalomfirescu/llm-proxy-log/blob/main/) or [llm-proxy-firewall](https://github.com/claudiucalomfirescu/llm-proxy-firewall/blob/main/))
 writes every agent conversation into a SQLite file. That file is complete but unreadable: each row
 repeats the whole conversation, JSON inside JSON. This console opens it **read-only** and lets you go
 from the big picture to a single message in a few clicks:
@@ -91,7 +91,7 @@ The code is one rendering of the specification; [`blueprint/`](blueprint/) is th
 To regenerate the project, give a coding model the `blueprint/` folder and the **P-REBUILD**
 prompt from PROMPTS.md, then run **P-VERIFY**. The tests in `tests/` cite the requirement ids
 they prove and `demo/data/` holds recorded traffic, so you can tell whether the rebuild behaves
-like this one. The method behind it is [Prax Systems](../prax-systems/README.md).
+like this one. The method behind it is [Prax Systems](https://github.com/claudiucalomfirescu/prax-systems/blob/main/README.md).
 
 ## Tests
 ```bash
