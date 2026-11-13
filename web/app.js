@@ -430,7 +430,11 @@
     const play = () => { if (pos >= beats.length - 1) render(-1); $("#r-play").textContent = "❚❚"; clearTimeout(timer); timer = setTimeout(tick, 300); };
     const api_ = {
       active: false,
-      start() { api_.active = true; bar.hidden = false; document.body.classList.add("replaying"); render(-1); play(); },
+      start() {
+        api_.active = true; bar.hidden = false; document.body.classList.add("replaying");
+        $(".wf-card").style.top = $(".top").offsetHeight + "px";   // stick the strip just under the header, however tall it wraps
+        render(-1); play();
+      },
       stop() { pause(); api_.active = false; bar.hidden = true; document.body.classList.remove("replaying"); render(beats.length - 1); wf.setPlayhead(-1);
         beats.forEach((b) => b.classList.remove("now")); },
       toggle() { timer ? pause() : play(); },

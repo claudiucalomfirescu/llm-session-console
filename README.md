@@ -28,16 +28,22 @@ one session read as a conversation, one call and the firewall finding on it, in 
 
 ## What it is
 Your LLM proxy (e.g. [llm-proxy-log](https://github.com/claudiucalomfirescu/llm-proxy-log/blob/main/) or [llm-proxy-firewall](https://github.com/claudiucalomfirescu/llm-proxy-firewall/blob/main/))
-writes every agent conversation into a SQLite file. That file is complete but unreadable: each row
-repeats the whole conversation, JSON inside JSON. This console opens it **read-only** and lets you go
+writes every agent conversation into a SQLite file. This console opens it **read-only** and takes you
 from the big picture to a single message in a few clicks:
 
-**all traffic → one user → one day or week → one session → one LLM call → the firewall finding on it.**
+**all traffic → one day → one user → one session → one LLM call → the firewall finding on it.**
 
-Per user and globally you get calls, sessions, tokens and active users by day or week, a weekday × hour
-heatmap, the tools the LLM called, and — when the log comes from the firewall proxy — every info,
-warning and block. A Three.js **galaxy** shows the same hierarchy in 3D: users are stars, sessions are
-planets, calls are moons; click to drill.
+| | |
+|---|---|
+| **A day at a glance.** One row per user, one bar per session, red and amber where the firewall flagged it. Click a bar to open the session. <br><br><img src="explainers/img/day-timeline.png" alt="Day timeline: users as rows, sessions as bars coloured by firewall level"> | **A session, readable.** A strip of its LLM calls (width = latency, gaps = the agent running tools), then each tool call as one card: arguments, and the result the agent sent back. <br><br><img src="explainers/img/tool-cards.png" alt="Session view with tool call cards and their results"> |
+| **Why the firewall stepped in.** The words it matched are highlighted inside the message, the proxy's reply *as the LLM* is marked, and every finding says which side it was found on. <br><br><img src="explainers/img/blocked-call.png" alt="A blocked call with the matched words highlighted"> | **Replay.** Play any session back message by message with a playhead on the strip; space, ← → and a scrubber; share it as a `&replay=1` link. <br><br><img src="explainers/img/replay.png" alt="A session being replayed with the toolbar at the bottom"> |
+
+Per user and globally you also get calls, sessions, tokens and active users by day or week, a weekday ×
+hour heatmap, the tools the LLM called and, when the log comes from the firewall proxy, every info,
+warning and block with a topic × level matrix. A Three.js **galaxy** shows the same hierarchy in 3D:
+users are stars, sessions are planets, calls are moons; click to drill.
+
+**Video (75 s):** [explainers/console-explainer.mp4](explainers/console-explainer.mp4)
 
 ## 60-second quickstart (no API key, no install)
 ```bash
@@ -45,9 +51,11 @@ git clone <url> llm-session-console && cd llm-session-console
 python3 -m console              # Python 3.10+, standard library only
 # open http://127.0.0.1:8095/
 ```
-It serves four bundled logs (picker top right): four weeks of the VXC Motors dealership (12 employee
-agents + customers, real recorded LLM traffic, firewall on), the first recorded VXC day in the old
-log format, and the Brightleaf demo team's week from llm-proxy-log (no firewall) and from
+It serves five bundled logs (picker top right): four weeks of the VXC Motors dealership (12 employee
+agents + customers, real recorded LLM traffic, firewall on), one full VXC day re-recorded on
+13 Nov 2026 by [vxc-motors-sim](https://github.com/claudiucalomfirescu/vxc-motors-sim) (552 real calls,
+7 blocked sessions: the best one for the day timeline and replay), the first recorded VXC day in the
+old log format, and the Brightleaf demo team's week from llm-proxy-log (no firewall) and from
 llm-proxy-firewall (with firewall). See [demo/DEMO.md](demo/DEMO.md) for
 a ten-step walkthrough.
 
@@ -70,7 +78,8 @@ flowchart LR
 - Opens the log with SQLite `mode=ro` in autocommit, so the proxy is never blocked.
 - Indexes the light columns of every call in memory (user, day, tokens, firewall level); charts never
   parse the big JSON.
-- Rebuilds each session as a conversation: each call contributes only the messages it added.
+- Rebuilds each session as a conversation: each call contributes only the messages it added, and
+  each tool result is put back under the tool call that asked for it (matched by `tool_call_id`).
 - Shows the firewall layer only if the log has a `signals` table.
 - Plain SVG charts, vendored Three.js, no CDN: works offline.
 Details: [ARCHITECTURE.md](blueprint/ARCHITECTURE.md).
@@ -103,10 +112,10 @@ python3 tools/prax_check.py . --level silver     # Prax Systems compliance
 ```
 blueprint/    GOAL · SPEC · ARCHITECTURE · PROMPTS · DECISIONS · ROADMAP (rebuild from these)
 console/      store.py (read-only log + aggregates) · transcript.py (sessions as conversations) · server.py
-web/          index.html · app.js (drill-down) · charts.js (SVG) · galaxy.js (Three.js) · vendor/
+web/          index.html · app.js (drill-down, session, replay) · charts.js (SVG: bars, heatmap, day timeline, waterfall) · galaxy.js (Three.js) · vendor/
 demo/         data/*.db.xz (recorded logs) · DEMO.md · live_replay.py
 tools/        make_samples.py (builds demo/data) · prax_check.py
-explainers/   index.html (animated, self-contained)
+explainers/   index.html (animated, self-contained) · img/ (screenshots) · console-explainer.mp4 · video/ (Remotion source)
 tests/        fixtures.py (logs in every schema) · test_store.py · test_server.py
 ```
 

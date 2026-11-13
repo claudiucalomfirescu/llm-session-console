@@ -217,7 +217,9 @@ footer { color: var(--muted); font-size: 13px; }
     <ul class="plain">
       <li><b>All traffic:</b> calls, sessions, users, tokens and firewall counts; a chart you can switch between calls, sessions, tokens, users and findings, by day or week; a weekday × hour heatmap.</li>
       <li><b>A user:</b> the same charts for one person, the tools the LLM called for them, and every session, filterable to warnings or blocks.</li>
-      <li><b>A session:</b> the conversation step by step, tool calls with their arguments, firewall findings on the message they concern, and the raw JSON on demand.</li>
+      <li><b>A day:</b> a timeline with one row per user and one bar per session, red and amber where the firewall flagged it; click a bar to open the session.</li>
+      <li><b>A session:</b> a timeline strip of its LLM calls (width = latency), then the conversation step by step; each tool call is one card with its arguments and the result the agent sent back; the words the firewall matched are highlighted in the message; the raw JSON on demand.</li>
+      <li><b>Replay:</b> play any session back message by message, pause, step, scrub, 1–8× speed, with a playhead on the strip; share it as a link.</li>
       <li><b>Firewall:</b> findings over time, a topic × level matrix, detectors and every admin action, each row opening the session at that call. Logs without a firewall just hide this layer.</li>
     </ul>
   </div>

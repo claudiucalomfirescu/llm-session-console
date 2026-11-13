@@ -191,6 +191,6 @@ mark.hit.block { background: color-mix(in srgb, var(--block) 35%, transparent); 
 .replay-bar input[type=range] { flex: 1; min-width: 60px; accent-color: var(--accent); }
 .replay-bar #r-play { min-width: 40px; }
 body.replaying main { padding-bottom: 50vh; }
-body.replaying .wf-card { position: sticky; top: 56px; z-index: 5; }
+body.replaying .wf-card { position: sticky; top: 56px; z-index: 5; box-shadow: 0 6px 16px rgba(0,0,0,.12); }
 @media (max-width: 700px) { .replay-bar #r-speed { display: none; } body.replaying .wf-card { position: static; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
