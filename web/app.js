@@ -415,7 +415,7 @@
       beats.forEach((b, k) => { b.classList.toggle("pending", k > pos); b.classList.toggle("now", k === pos); });
       view.querySelectorAll(".step").forEach((st) => st.classList.toggle("pending", !st.querySelector(".beat:not(.pending)")));
       const cur = beats[pos];
-      if (cur) { cur.scrollIntoView({ block: "center", behavior: smooth() }); wf.setPlayhead(Number(cur.dataset.step), cur.dataset.at === "start"); }
+      if (cur) { cur.scrollIntoView({ block: "end", behavior: smooth() }); /* newest at the bottom, like a chat */ wf.setPlayhead(Number(cur.dataset.step), cur.dataset.at === "start"); }
       else wf.setPlayhead(-1);
       scrub.value = pos;
       $("#r-pos").textContent = `${pos + 1} / ${beats.length}` + (cur ? ` · call ${Number(cur.dataset.step) + 1}` : "");

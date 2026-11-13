@@ -1,0 +1,19 @@
+{
+  "name": "console-explainer-video",
+  "version": "1.0.0",
+  "description": "75-second explainer video of llm-session-console (Remotion)",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "node": "^20.19.0 || ^22.13.0 || >=24" },
+  "dependencies": {
+    "@remotion/cli": "4.0.540",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.540"
+  },
+  "scripts": {
+    "render": "remotion render ConsoleExplainer ../console-explainer.mp4",
+    "dev": "remotion studio"
+  },
+  "allowScripts": { "esbuild": false }
+}

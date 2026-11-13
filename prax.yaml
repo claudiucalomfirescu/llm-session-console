@@ -30,6 +30,7 @@ docs:
 explainer:
   file: explainers/index.html
   published: "https://claude.ai/artifact/PezDkCy9QLtZon76eJiGnT"
+  video: explainers/console-explainer.mp4   # 73 s, Remotion source in explainers/video/
 built_with:
   model: "Claude (Anthropic), Opus family"
   date: "2026-10-30"
