@@ -84,6 +84,7 @@ class TestDemoData(unittest.TestCase):
         names = sorted(os.path.basename(p) for p in paths)
         self.assertIn("vxc-4-weeks.db", names)
         self.assertIn("vxc-recorded-day.db", names)
+        self.assertIn("vxc-day-2026-11-13.db", names)
         t = time.time()
         logs = server.Logs(paths)
         self.assertLess(time.time() - t, 5)
@@ -99,6 +100,10 @@ class TestDemoData(unittest.TestCase):
             fn()
             self.assertLess(time.time() - t, 1.5)
         self.assertEqual(logs.get("vxc-recorded-day").meta()["identity"], "X-Agent-Id")
+        day = logs.get("vxc-day-2026-11-13").meta()   # the VXC day re-recorded on 13 Nov 2026
+        self.assertGreater(day["calls"], 500)
+        self.assertEqual((day["first"], day["last"]), ("2026-11-13", "2026-11-13"))
+        self.assertEqual(day["identity"], "labels.user")
         bright = logs.get("brightleaf-team-week")   # llm-proxy-log's demo team: a real K-log-schema@1 log
         self.assertFalse(bright.meta()["has_signals"])
         self.assertEqual(bright.meta()["identity"], "X-Agent-User")

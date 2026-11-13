@@ -18,7 +18,7 @@ Build a local, read-only web console over an LLM proxy's SQLite log:
   structure is yours.
 - Read logs in the shapes K-log-schema@1 and @2 and the legacy shape (tests/fixtures.py builds all
   three). Never write to a log and never hold a read transaction open.
-- The UI is a single page with hash routes (#/, #/u/<user>, #/s/<session>?call=, #/fw, #/galaxy,
+- The UI is a single page with hash routes (#/, #/u/<user>, #/s/<session>?call=&replay=1, #/fw, #/galaxy,
   #/search) where every filter is in the URL; charts are plain SVG; the galaxy uses a vendored copy
   of Three.js. No CDN, no network at runtime.
 - With no arguments the program serves demo/data/*.db.xz (unpack them to demo/data/.cache/).
@@ -152,4 +152,27 @@ Write README (60-second quickstart), GOAL, SPEC, ARCHITECTURE (requirement -> co
 DECISIONS, demo/DEMO.md (10-step walkthrough citing R-ids) and explainers/index.html: one
 self-contained animated page (what / problem / how a call becomes a drill-down / what you get /
 replicate it) with play, pause, step and keyboard controls, light and dark, reduced motion.
+```
+
+### P-08 · Read a session at a glance (2026-11-13)
+- **Goal:** a session is the unit people investigate; make it readable and playable.
+- **Delivers:** R-025…R-029
+- **Done when:** the new tests pass and DEMO steps 3, 5 and 6 look as described
+
+```text
+Improve the session and day views without new endpoints except where a test needs one:
+1. In transcript.build_session, pair every tool result (role "tool", tool_call_id) with the tool call
+   in an earlier answer that has that id: set result / result_in on the call, paired / name on the
+   message. The UI renders each tool call as a card (name, arguments as key/value, result summary:
+   N rows + keys, an error, or the first fields; full JSON in a <details>) and skips paired messages.
+2. Above the steps draw a waterfall strip: one bar per call at its ts, width = duration_ms, coloured by
+   worst level, diamonds for tool calls; click jumps to the call.
+3. Replay: every message, tool card and findings block is a beat; Replay hides them and reveals one at
+   a time (700 ms + 12 ms per character, capped, divided by 1/2/4/8x), with a bottom toolbar (prev,
+   play/pause, next, scrubber, speed, exit), keys space/←/→/Esc, a playhead on the strip and ?replay=1.
+4. Highlight each finding's `matched` text (split on " + ") inside the message on its side
+   (request = agent's message, response = LLM answer) with <mark> coloured by level.
+5. When the view covers one day, show a day timeline: lanes = users (sorted by dept), bars = sessions,
+   colour = worst level, click opens the session. Merge the firewall KPI tiles into one.
+Do not re-render the session page on window resize (it would stop a replay).
 ```

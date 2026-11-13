@@ -10,7 +10,8 @@ Status: ✅ done · 🔜 in progress · ⏳ planned · 💤 parked
 | M4 · Galaxy 3D | R-013, R-022 | ✅ 2026-10-30 |
 | M5 · Clone-and-see: bundled demo logs, live replay, explainer | R-018, R-101, R-102 | ✅ 2026-10-30 |
 | M6 · Contract tests against the owners' demo DBs | R-002 on llm-proxy-log and llm-proxy-firewall fixtures | ✅ 2026-10-30 (both fixtures on `split` load; also bundled as demo logs) |
-| M7 · Compare and export | ⏳ R-2xx to be specified | ⏳ |
+| M7 · Read a session at a glance: tool cards, timeline strip, replay, matched-text highlights, day timeline | R-025…R-029 | ✅ 2026-11-13 |
+| M8 · Compare and export | ⏳ R-2xx to be specified | ⏳ |
 
 ## Next
 - Compare two periods or two users side by side (e.g. this week vs last).
@@ -19,7 +20,8 @@ Status: ✅ done · 🔜 in progress · ⏳ planned · 💤 parked
   that the LLM *asked* for a tool, and the result the agent sent back next turn).
 
 ## Ideas, not commitments
-- Galaxy time-lapse: replay a day and watch planets appear as sessions start.
+- Galaxy time-lapse: replay a day and watch planets appear as sessions start (the day timeline is the 2D version).
+- Replay a whole day: step through every session on the day timeline in time order.
 - Cost estimates from a price table for models that do not report cost.
 - Optional read-only link to the firewall's admin API (block / unblock from the console) — kept
   out for now so the console stays strictly read-only.

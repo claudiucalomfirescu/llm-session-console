@@ -9,7 +9,7 @@
 
    Filters live in the hash query (?db=&from=&to=&dept=&bucket=&system=), so every view is a link. */
 (function () {
-  const { bars, heatmap, hbars, spark, fmt, esc, css, shortDate } = window.Charts;
+  const { bars, heatmap, hbars, spark, timeline, waterfall, fmt, esc, css, shortDate } = window.Charts;
   const $ = (s, r = document) => r.querySelector(s);
   const view = $("#view");
   const LEVEL = ["info", "warning", "block"];
@@ -108,14 +108,28 @@
   const colorOf = (dept) => deptColor[dept] || "#888";
   const levelColor = (lv) => lv ? css("--" + lv) : css("--none");
 
-  function kpis(t, extra = []) {
-    const fw = t.firewall || {};
+  function kpis(t) {
     const items = [["Calls", t.calls], ["Sessions", t.sessions], ["Users", t.users], ["Tokens", t.tokens],
       ["Active days", t.days], ["Avg latency", t.avg_ms != null ? (t.avg_ms / 1000).toFixed(1) + "s" : "–"],
-      ["Cost", t.cost ? "$" + t.cost.toFixed(4) : "$0"], ["Errors", t.errors], ...extra];
-    if (META && META.has_signals) items.push(["Info", fw.info || 0, "lv-info"], ["Warnings", fw.warning || 0, "lv-warning"], ["Blocks", fw.block || 0, "lv-block"]);
-    return `<div class="kpis">${items.map(([l, v, c]) => `<div class="kpi ${c || ""}"><div class="v">${typeof v === "number" ? fmt(v) : esc(v)}</div><div class="l">${l}</div></div>`).join("")}</div>`;
+      ["Cost", t.cost ? "$" + t.cost.toFixed(4) : "$0"], ["Errors", t.errors]];
+    return `<div class="kpis">${items.map(([l, v]) => `<div class="kpi"><div class="v">${typeof v === "number" ? fmt(v) : esc(v)}</div><div class="l">${l}</div></div>`).join("")}
+      ${META && META.has_signals ? fwTile(t.firewall || {}, "firewall findings") : ""}</div>`;
   }
+
+  /* A day as swimlanes: one row per user, one bar per session, coloured by its worst firewall level. */
+  async function dayTimeline(container, extra) {
+    const sessions = await api("sessions", extra);
+    const by = {};
+    sessions.forEach((s) => (by[s.user] = by[s.user] || { label: s.user, dept: s.dept, color: colorOf(s.dept), items: [] })
+      .items.push({ ...s, start: s.started, end: s.ended, level: s.max_level }));
+    const lanes = Object.values(by).sort((a, b) => String(a.dept).localeCompare(String(b.dept)) || a.label.localeCompare(b.label));
+    timeline(container, lanes, { levelColor,
+      tipHtml: (it) => `<b>${esc(it.title || it.session)}</b>${esc(it.user)} · ${time(it.started)}–${time(it.ended)} · ${it.calls} call${it.calls === 1 ? "" : "s"} ${badge(it.max_level)}<div class="muted">click to open the session</div>`,
+      onClick: (it) => go("/s/" + encodeURIComponent(it.session), {}, ["call", "replay"]) });
+  }
+  const timelineCard = (who) => `<section class="card span-12"><div class="row"><h2>Day timeline</h2><span class="legend">
+      <span>one row per ${who}, one bar per session</span><span><i style="background:${levelColor(null)}"></i>clean</span>
+      ${META.has_signals ? LEVEL.map((l) => `<span><i style="background:${levelColor(l)}"></i>${l}</span>`).join("") : ""}</span></div><div id="daytl"></div></section>`;
 
   function seriesChart(container, series, { onClick, selected, metric }) {
     const m = metric || "calls";
@@ -150,11 +164,12 @@
     const q = parseHash().q;
     const d = await api("overview");
     const t = d.totals;
-    const single = q.from && q.from === q.to;
+    const single = (q.from && q.from === q.to) || (t.first && t.first === t.last);
     view.innerHTML = `
-      <h1>${single ? dayLabel(q.from) : "All traffic"} <small>${t.first ? `${dayLabel(t.first)} – ${dayLabel(t.last)}` : "no calls"} · UTC</small></h1>
+      <h1>${single ? dayLabel(t.first) : "All traffic"} <small>${!t.first ? "no calls" : single ? "one day" : `${dayLabel(t.first)} – ${dayLabel(t.last)}`} · UTC</small></h1>
       ${kpis(t)}
       <div class="grid">
+        ${single ? timelineCard("user") : ""}
         <section class="card span-12"><div class="row"><h2>${single ? "By hour" : "Over time"}</h2>${metricPicker("metric", q.metric || "calls")}</div>
           <div id="series"></div><div class="muted" style="font-size:12px;margin-top:4px">${single ? "" : "Click a bar to drill into that " + (q.bucket === "week" ? "week" : "day") + "."}</div></section>
         <section class="card span-8"><div class="row"><h2>Users</h2><span class="muted">${d.users.length} · click to drill in</span></div><div class="tbl-wrap" id="users"></div></section>
@@ -169,6 +184,7 @@
     hbars($("#depts"), d.depts.map((x) => ({ key: x.dept, value: x.calls, color: colorOf(x.dept), href: link("/", { dept: x.dept }), extra: ` · ${x.users}u` })));
     hbars($("#models"), d.models.map((x) => ({ key: x.model, value: x.calls })));
     heatmap($("#heat"), d.heatmap);
+    if (single) await dayTimeline($("#daytl"));
   }
 
   function usersTable(container, users, days) {
@@ -201,12 +217,13 @@
     crumbs([`<a href="${link("/u/" + encodeURIComponent(user))}">${esc(user)}</a>`]);
     const d = await api("user/" + encodeURIComponent(user));
     const u = d.user, t = d.totals;
-    const single = q.from && q.from === q.to;
+    const single = (q.from && q.from === q.to) || (t.first && t.first === t.last);
     view.innerHTML = `
       <h1><span class="dot" style="background:${colorOf(u.dept)};width:14px;height:14px"></span>${esc(user)}
         <small>${esc(u.dept)} · agent${u.agents && u.agents.includes(",") ? "s" : ""} ${esc(u.agents)} · first seen ${dt(u.first_seen)} · last seen ${dt(u.last_seen)}</small></h1>
       ${kpis(t)}
       <div class="grid">
+        ${single ? timelineCard("user") : ""}
         <section class="card span-8"><div class="row"><h2>${single ? "By hour" : "Activity over time"}</h2>${metricPicker("metric", q.metric || "calls")}</div><div id="series"></div></section>
         <section class="card span-4"><h2>Tools the LLM called</h2><div id="tools"></div></section>
         <section class="card span-12"><div class="row"><h2>Sessions</h2>
@@ -222,6 +239,7 @@
     const sessions = d.sessions.filter((s) => !q.level || q.level === "all" || rank(s.max_level) >= rank(q.level));
     sessionsTable($("#sessions"), sessions);
     $("#lvl").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => go(parseHash().path, { level: b.dataset.l === "all" ? "" : b.dataset.l })));
+    if (single) await dayTimeline($("#daytl"), { user });
   }
   const rank = (lv) => LEVEL.indexOf(lv) + 1;
 
@@ -241,71 +259,203 @@
   async function viewSession(id) {
     const d = await api("session/" + encodeURIComponent(id));
     const q = parseHash().q;
-    crumbs([`<a href="${link("/u/" + encodeURIComponent(d.user))}">${esc(d.user)}</a>`,
-      `<a href="${link("/u/" + encodeURIComponent(d.user), { from: d.started.slice(0, 10), to: d.started.slice(0, 10), range: "custom" })}">${dayLabel(d.started.slice(0, 10))}</a>`,
+    const day = d.started.slice(0, 10);
+    crumbs([`<a href="${link("/u/" + encodeURIComponent(d.user), {}, ["call", "replay"])}">${esc(d.user)}</a>`,
+      `<a href="${link("/u/" + encodeURIComponent(d.user), { from: day, to: day, range: "custom" }, ["call", "replay"])}">${dayLabel(day)}</a>`,
       `<span>session ${esc(id.slice(0, 14))}</span>`]);
     const sigs = d.steps.flatMap((s) => s.signals).concat(d.loose_signals);
     const fw = {}; sigs.forEach((s) => (fw[s.level] = (fw[s.level] || 0) + 1));
-    const labels = Object.entries(d.labels || {}).map(([k, v]) => `<span class="badge out">${esc(k)}: ${esc(v)}</span>`).join(" ");
+    const nTools = d.steps.reduce((n, s) => n + ((s.output && s.output.tool_calls) || []).length, 0);
+    const llmMs = d.steps.reduce((n, s) => n + (s.duration_ms || 0), 0);
+    const labels = Object.entries(d.labels || {}).filter(([k]) => k !== "title")
+      .map(([k, v]) => `<span class="badge out">${esc(k)}: ${esc(typeof v === "object" ? JSON.stringify(v) : v)}</span>`).join(" ");
+    const tile = (v, l, c = "") => `<div class="kpi ${c}"><div class="v">${v}</div><div class="l">${l}</div></div>`;
     view.innerHTML = `
-      <h1>${esc(d.labels.title || "Session " + id.slice(0, 14))} <small>${esc(d.user)} · ${esc(d.dept || "")} · ${dt(d.started)} → ${time(d.ended)} (${dur(d.started, d.ended)})</small></h1>
-      <div class="kpis">
-        <div class="kpi"><div class="v">${d.totals.calls}</div><div class="l">LLM calls</div></div>
-        <div class="kpi"><div class="v">${fmt(d.totals.tokens)}</div><div class="l">tokens</div></div>
-        <div class="kpi"><div class="v">${d.steps.reduce((n, s) => n + ((s.output && s.output.tool_calls) || []).length, 0)}</div><div class="l">tool calls</div></div>
-        ${META.has_signals ? LEVEL.map((l) => `<div class="kpi lv-${l}"><div class="v">${fw[l] || 0}</div><div class="l">${l}</div></div>`).join("") : ""}
+      <div class="sess-head">
+        <h1>${esc(d.labels.title || "Session " + id.slice(0, 14))} <small>${esc(d.user)} · ${esc(d.dept || "")} · ${dt(d.started)} → ${time(d.ended)}</small></h1>
+        <div class="sess-actions"><a class="btn ghost" id="prev" hidden title="Previous session of ${esc(d.user)}">‹ prev</a>
+          <a class="btn ghost" id="next" hidden title="Next session of ${esc(d.user)}">next ›</a>
+          <button class="btn" id="replay-btn" title="Play the session back message by message">▶ Replay</button></div>
       </div>
-      <div class="card" style="margin-bottom:12px">
-        <div style="margin-bottom:6px">${labels}</div>
+      <div class="kpis">
+        ${tile(d.totals.calls, "LLM calls")}${tile(nTools, "tool calls")}${tile(fmt(d.totals.tokens), "tokens")}
+        ${tile(dur(d.started, d.ended), "wall time")}${tile((llmMs / 1000).toFixed(1) + "s", "waiting on the LLM")}
+        ${META.has_signals ? fwTile(fw, "firewall findings") : ""}
+      </div>
+      <section class="card wf-card"><div class="row"><h2>Timeline</h2><span class="legend">
+        <span><i style="background:${levelColor(null)}"></i>LLM call (width = latency)</span><span><i class="rail-i"></i>agent running tools</span>
+        <span><i class="tick-i"></i>tool call</span>${META.has_signals ? LEVEL.map((l) => `<span><i style="background:${levelColor(l)}"></i>${l}</span>`).join("") : ""}</span></div>
+        <div id="wf"></div></section>
+      <div class="card sess-meta">
+        ${labels ? `<div style="margin-bottom:6px">${labels}</div>` : ""}
         <details><summary>System prompt (${fmt((d.system_prompt || "").length)} chars)</summary><div class="msg system" style="margin-top:6px">${esc(d.system_prompt || "(none)")}</div></details>
-        <details><summary>Tools offered to the LLM (${d.tools.length})</summary><div style="margin-top:6px">${d.tools.map((t) => `<span class="tc">${esc(t)}</span>`).join("")}</div></details>
+        <details><summary>Tools offered to the LLM (${d.tools.length})</summary><div style="margin-top:6px">${d.tools.map((t) => `<span class="chip-t">${esc(t)}</span>`).join("")}</div></details>
         ${d.loose_signals.length || d.loose_actions.length ? `<details open><summary>Session-level firewall events</summary>${d.loose_signals.map(sigHtml).join("")}${d.loose_actions.map(actHtml).join("")}</details>` : ""}
       </div>
-      <div class="steps">${d.steps.map((s, i) => stepHtml(s, i)).join("")}</div>`;
+      <div class="steps">${d.steps.map((s, i) => stepHtml(s, i)).join("")}</div>
+      <div class="replay-bar" id="rbar" hidden role="toolbar" aria-label="Replay">
+        <button class="icon" id="r-prev" title="Back one message (←)">⏮</button>
+        <button class="btn" id="r-play" title="Play / pause (space)">❚❚</button>
+        <button class="icon" id="r-next" title="Forward one message (→)">⏭</button>
+        <input type="range" id="r-scrub" min="-1" value="-1" aria-label="Position">
+        <span id="r-pos" class="mono"></span>
+        <div class="seg" id="r-speed">${[1, 2, 4, 8].map((x) => `<button data-s="${x}">${x}×</button>`).join("")}</div>
+        <button class="icon" id="r-exit" title="Show everything (Esc)">✕</button>
+      </div>`;
+    const wf = waterfall($("#wf"), d.steps.map((s) => ({ ...s, level: stepLevel(s), tools: ((s.output && s.output.tool_calls) || []).map((t) => (t.function || {}).name) })), {
+      levelColor,
+      tipHtml: (s, i) => `<b>Call #${i + 1} · ${s.ts.slice(11, 19)}</b>${(s.duration_ms / 1000 || 0).toFixed(1)}s · ${fmt(s.prompt_tokens)} in · ${fmt(s.completion_tokens)} out${s.level ? " · " + badge(s.level) : ""}`
+        + (s.tools.length ? `<div>🔧 ${s.tools.map(esc).join(", ")}</div>` : "") + '<div class="muted">click to jump</div>',
+      onClick: (s) => { const el = document.getElementById("call-" + s.call_id); if (el) { flash(el); el.scrollIntoView({ block: "start", behavior: smooth() }); } },
+    });
     view.querySelectorAll("[data-raw]").forEach((b) => b.addEventListener("click", () => showRaw(b.dataset.raw)));
-    if (q.call) {
+    REPLAY = makeReplay(wf);
+    $("#replay-btn").addEventListener("click", () => REPLAY.start());
+    if (q.replay === "1") REPLAY.start();
+    else if (q.call) {
       const el = document.getElementById("call-" + q.call);
       if (el) { el.classList.add("hl"); el.scrollIntoView({ block: "center" }); }
     }
+    try {   // previous / next session of the same user (in the current filters)
+      const list = await api("sessions", { user: d.user });
+      const k = list.findIndex((s) => s.session === id);
+      [["prev", list[k + 1]], ["next", list[k - 1]]].forEach(([b, s]) => {
+        if (k >= 0 && s) { $("#" + b).href = link("/s/" + encodeURIComponent(s.session), {}, ["call", "replay"]); $("#" + b).hidden = false; $("#" + b).title += ": " + (s.title || "").slice(0, 80); }
+      });
+    } catch (e) { if (!(e instanceof Stale)) console.warn(e); }
+  }
+
+  const smooth = () => matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  const flash = (el) => { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); };
+  const stepLevel = (s) => s.signals.reduce((m, x) => rank(x.level) > rank(m) ? x.level : m, s.firewall_level || null);
+  const fwTile = (fw, label) => `<div class="kpi"><div class="v fwv">${LEVEL.map((l) => `<span class="lv-${l}" title="${l}">${fmt(fw[l] || 0)}</span>`).join('<i>·</i>')}</div><div class="l">${label}</div></div>`;
+
+  /* Mark the text a finding matched, inside the message it was found in (request = what the agent sent,
+     response = the LLM's answer). `matched` may join several hits with " + ". */
+  function marker(signals, direction) {
+    const terms = {};
+    signals.filter((s) => (s.direction || "request") === direction && s.matched).forEach((s) =>
+      String(s.matched).split(" + ").map((t) => t.trim()).filter((t) => t.length >= 3).forEach((t) => {
+        const k = t.toLowerCase(); if (rank(s.level) > rank(terms[k])) terms[k] = s.level; }));
+    const keys = Object.keys(terms).sort((a, b) => b.length - a.length);
+    if (!keys.length) return esc;
+    const re = new RegExp(keys.map((k) => esc(k).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+    return (text) => esc(text).replace(re, (m) => `<mark class="hit ${terms[m.toLowerCase()] || ""}" title="firewall: ${terms[m.toLowerCase()] || ""}">${m}</mark>`);
   }
 
   function stepHtml(s, i) {
-    const lv = s.firewall_level || s.signals.reduce((m, x) => rank(x.level) > rank(m) ? x.level : m, null);
+    const lv = stepLevel(s);
     const blocked = s.actions.some((a) => a.action === "replace_response") || s.firewall_level === "block";
     const out = s.output || {};
-    return `<article class="step ${lv ? "lv-" + lv : ""}" id="call-${s.call_id}">
-      <div class="step-head"><b>#${i + 1}</b><span>${time(s.ts)}</span><span class="mono">${esc(s.upstream_model || s.model || "")}</span>
+    const inMark = marker(s.signals, "request"), outMark = marker(s.signals, "response");
+    const shown = s.input.filter((m) => !m.paired), paired = s.input.length - shown.length;
+    return `<article class="step ${lv ? "lv-" + lv : ""}" id="call-${s.call_id}" data-step="${i}">
+      <div class="step-head"><b>#${i + 1}</b><span class="mono">${s.ts ? s.ts.slice(11, 19) : ""}</span><span class="mono">${esc(s.upstream_model || s.model || "")}</span>
         <span>${fmt(s.prompt_tokens)} in · ${fmt(s.completion_tokens)} out</span><span>${s.duration_ms != null ? (s.duration_ms / 1000).toFixed(1) + "s" : ""}</span>
         <span>${esc(s.finish_reason || "")}</span>${badge(lv)}${s.status >= 400 ? `<span class="badge block">HTTP ${s.status}</span>` : ""}
         <span class="sp"></span><button class="icon" data-raw="${s.call_id}" title="Raw request and response">{ } raw</button></div>
       <div class="msgs">
-        ${s.input.map(msgHtml).join("")}
-        ${s.error ? `<div class="msg blocked"><span class="who">error</span>${esc(typeof s.error === "string" ? s.error : JSON.stringify(s.error))}</div>` : ""}
-        ${out.content || out.tool_calls ? `<div class="msg assistant ${blocked ? "blocked" : ""}"><span class="who">${blocked ? "proxy (answering as the LLM: blocked)" : "LLM"}</span>${esc(out.content || "")}${(out.tool_calls || []).map(tcHtml).join("")}</div>` : ""}
+        ${paired ? `<div class="returned beat" data-step="${i}" data-at="start">↩ the agent ran the tool${paired > 1 ? "s" : ""} and sent back ${paired} result${paired > 1 ? "s" : ""} (shown under each call above)</div>` : ""}
+        ${shown.map((m) => msgHtml(m, i, inMark)).join("")}
+        ${s.error ? `<div class="msg blocked beat" data-step="${i}"><span class="who">error</span>${esc(typeof s.error === "string" ? s.error : JSON.stringify(s.error))}</div>` : ""}
+        ${out.content ? `<div class="msg assistant ${blocked ? "blocked" : ""} beat" data-step="${i}"><span class="who">${blocked ? "⛔ proxy, answering as the LLM: blocked" : "LLM"}</span>${outMark(out.content)}</div>` : ""}
+        ${(out.tool_calls || []).map((tc) => toolHtml(tc, i)).join("")}
       </div>
-      ${s.signals.map(sigHtml).join("")}${s.actions.map(actHtml).join("")}
+      ${s.signals.length || s.actions.length ? `<div class="verdicts beat" data-step="${i}">${s.signals.map(sigHtml).join("")}${s.actions.map(actHtml).join("")}</div>` : ""}
     </article>`;
   }
-  function msgHtml(m) {
+  function msgHtml(m, i, mark) {
     const who = m.role === "tool" ? `tool result${m.name ? " · " + m.name : ""}` : m.role === "user" ? "user / agent" : m.role;
     let content = m.content || "";
     if (m.role === "tool") { try { content = JSON.stringify(JSON.parse(content), null, 1); } catch (e) { /* not JSON */ } }
-    return `<div class="msg ${esc(m.role)}"><span class="who">${esc(who)}</span>${esc(content)}${(m.tool_calls || []).map(tcHtml).join("")}</div>`;
+    return `<div class="msg ${esc(m.role)} beat" data-step="${i}" data-at="start"><span class="who">${esc(who)}</span>${(mark || esc)(content)}${(m.tool_calls || []).map((tc) => toolHtml(tc, i)).join("")}</div>`;
   }
-  function tcHtml(tc) {
-    const f = tc.function || {};
-    let args = f.arguments || "";
-    try { args = JSON.stringify(JSON.parse(args), null, 1); } catch (e) { /* keep raw */ }
-    return `<span class="tc">🔧 <b>${esc(f.name)}</b><details><summary>args</summary>${esc(args)}</details></span>`;
+  const parse = (t) => { try { return JSON.parse(t); } catch (e) { return undefined; } };
+  const short = (v, n = 48) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+  /* One tool call as a card: name, arguments as key: value, and the result the agent sent back. */
+  function toolHtml(tc, i) {
+    const f = tc.function || {}, a = parse(f.arguments || "");
+    const args = a && typeof a === "object" && !Array.isArray(a)
+      ? Object.entries(a).map(([k, v]) => `<span class="kv"><i>${esc(k)}</i> ${esc(short(v))}</span>`).join("")
+      : `<span class="kv">${esc(short(f.arguments || "", 160))}</span>`;
+    let res = '<span class="muted">no result in the log (the session ended or was blocked first)</span>', full = "";
+    if (tc.result != null) {
+      const r = parse(tc.result);
+      const err = r && typeof r === "object" && !Array.isArray(r) && r.error;
+      const summary = Array.isArray(r) ? `${r.length} row${r.length === 1 ? "" : "s"}${r[0] && typeof r[0] === "object" ? " · " + esc(Object.keys(r[0]).slice(0, 5).join(", ")) : ""}`
+        : err ? `<b class="err">error</b> ${esc(short(err, 140))}`
+        : r && typeof r === "object" ? Object.entries(r).slice(0, 4).map(([k, v]) => `<span class="kv"><i>${esc(k)}</i> ${esc(short(v, 40))}</span>`).join("")
+        : esc(short(String(tc.result), 160));
+      res = `<span class="res-sum">${summary}</span>`;
+      full = `<details><summary>full result</summary><pre class="json">${esc(r !== undefined ? JSON.stringify(r, null, 2) : tc.result)}</pre></details>`;
+    }
+    return `<div class="tool beat" data-step="${i}"><div class="tool-call"><span class="tname">🔧 ${esc(f.name || "?")}</span>${args}</div>
+      <div class="tool-res"><span class="arrow">↳</span>${res}</div>${full}</div>`;
   }
   function sigHtml(s) {
-    return `<div class="sig">${badge(s.level)}<div><b>${esc(s.topic)}</b> <span class="muted">· ${esc(s.detector)}${s.rule ? " · " + esc(s.rule) : ""} · ${esc(s.direction || "")}${s.confidence != null ? " · conf " + s.confidence : ""}</span>
-      ${s.matched ? `<div>matched: <span class="mono">${esc(s.matched)}</span></div>` : ""}
+    const where = s.direction === "response" ? "in the LLM's answer" : s.direction === "request" ? "in what the agent sent" : (s.direction || "");
+    const conf = s.confidence != null ? `<span class="conf" title="classifier confidence ${s.confidence}"><i style="width:${Math.round(100 * s.confidence)}%"></i></span>` : "";
+    return `<div class="sig">${badge(s.level)}<div><b>${esc(s.topic)}</b> <span class="muted">· ${esc(s.detector)}${s.rule ? " · " + esc(s.rule) : ""} · ${esc(where)}</span>${conf}
+      ${s.matched ? `<div>matched <mark class="hit ${esc(s.level)}">${esc(s.matched)}</mark></div>` : ""}
       ${s.rationale ? `<div class="why">${esc(s.rationale)}</div>` : ""}</div></div>`;
   }
   function actHtml(a) {
     return `<div class="sig"><span class="badge out">${esc(a.action.replace("_", " "))}</span><div><b>${esc(a.actor)}</b> <span class="muted">${dt(a.ts)}${a.topic ? " · " + esc(a.topic) : ""}</span><div class="why">${esc(a.reason || "")}</div></div></div>`;
   }
+
+  /* Replay: hide every message of the session, then reveal them one by one, paced by their length,
+     with the waterfall's playhead following. Space plays/pauses, arrows step, Esc shows everything. */
+  let REPLAY = null;
+  function makeReplay(wf) {
+    const beats = [...view.querySelectorAll(".beat")], bar = $("#rbar"), scrub = $("#r-scrub");
+    let pos = beats.length - 1, timer = null, speed = 1;
+    scrub.max = beats.length - 1;
+    const render = (n) => {
+      pos = Math.max(-1, Math.min(n, beats.length - 1));
+      beats.forEach((b, k) => { b.classList.toggle("pending", k > pos); b.classList.toggle("now", k === pos); });
+      view.querySelectorAll(".step").forEach((st) => st.classList.toggle("pending", !st.querySelector(".beat:not(.pending)")));
+      const cur = beats[pos];
+      if (cur) { cur.scrollIntoView({ block: "center", behavior: smooth() }); wf.setPlayhead(Number(cur.dataset.step), cur.dataset.at === "start"); }
+      else wf.setPlayhead(-1);
+      scrub.value = pos;
+      $("#r-pos").textContent = `${pos + 1} / ${beats.length}` + (cur ? ` · call ${Number(cur.dataset.step) + 1}` : "");
+    };
+    const pause = () => { clearTimeout(timer); timer = null; $("#r-play").textContent = "▶"; };
+    const tick = () => {
+      if (pos >= beats.length - 1) return pause();
+      render(pos + 1);
+      const len = beats[pos].textContent.length;
+      timer = setTimeout(tick, (700 + Math.min(len * 12, 2600)) / speed);
+    };
+    const play = () => { if (pos >= beats.length - 1) render(-1); $("#r-play").textContent = "❚❚"; clearTimeout(timer); timer = setTimeout(tick, 300); };
+    const api_ = {
+      active: false,
+      start() { api_.active = true; bar.hidden = false; document.body.classList.add("replaying"); render(-1); play(); },
+      stop() { pause(); api_.active = false; bar.hidden = true; document.body.classList.remove("replaying"); render(beats.length - 1); wf.setPlayhead(-1);
+        beats.forEach((b) => b.classList.remove("now")); },
+      toggle() { timer ? pause() : play(); },
+      step(d) { pause(); render(pos + d); },
+      destroy() { clearTimeout(timer); document.body.classList.remove("replaying"); },
+    };
+    $("#r-play").addEventListener("click", api_.toggle);
+    $("#r-prev").addEventListener("click", () => api_.step(-1));
+    $("#r-next").addEventListener("click", () => api_.step(1));
+    $("#r-exit").addEventListener("click", api_.stop);
+    scrub.addEventListener("input", () => { pause(); render(Number(scrub.value)); });
+    const speeds = $("#r-speed").querySelectorAll("button");
+    const setSpeed = (x) => { speed = x; speeds.forEach((b) => b.classList.toggle("on", Number(b.dataset.s) === x)); };
+    speeds.forEach((b) => b.addEventListener("click", () => setSpeed(Number(b.dataset.s))));
+    setSpeed(1);
+    return api_;
+  }
+  document.addEventListener("keydown", (e) => {
+    if (!REPLAY || !REPLAY.active || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && document.activeElement.id !== "r-scrub") return;
+    if (e.key === " ") { e.preventDefault(); REPLAY.toggle(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); REPLAY.step(1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); REPLAY.step(-1); }
+    else if (e.key === "Escape") REPLAY.stop();
+  });
+
   async function showRaw(id) {
     const c = await api("call/" + id);
     $("#modal-title").textContent = `Call ${id} · ${c.ts} · ${c.user}`;
@@ -390,6 +540,7 @@
   // ---- router ----------------------------------------------------------------------------------
   async function route() {
     if (galaxyMod && galaxyMod.unmount) galaxyMod.unmount();
+    if (REPLAY) { REPLAY.destroy(); REPLAY = null; }
     routeToken++;
     syncControls();
     const { path, q } = parseHash();
@@ -416,7 +567,7 @@
     const p = parseHash().path;
     route().then(() => { if (p !== lastPath) window.scrollTo(0, 0); lastPath = p; });
   });
-  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => !parseHash().path.startsWith("/galaxy") && route(), 250); });
+  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => !/^\/(galaxy|s\/)/.test(parseHash().path) && route(), 250); });   // charts redraw at the new width; a session (maybe mid-replay) and the galaxy resize themselves
 
   (async function init() {
     DBS = (await (await fetch("/api/dbs")).json()).dbs;

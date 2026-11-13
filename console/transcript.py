@@ -78,6 +78,25 @@ def new_messages(prev, cur):
     return cur[n:]
 
 
+def pair_tool_results(steps):
+    """Put each tool result next to the tool call that asked for it.
+
+    The LLM asks for tools in call N's answer; the agent runs them and sends the results in call N+1's
+    request. Read in that order, the result sits far from its question. Here every tool call in an
+    answer gets `result` (the content the agent sent back) and `result_in` (the call that carried it),
+    and that tool message is marked `paired` so the UI shows it once, under its call."""
+    asked = {}
+    for st in steps:
+        for m in st["input"]:
+            tc = asked.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
+            if tc is not None:
+                tc["result"], tc["result_in"] = m.get("content"), st["call_id"]
+                m["paired"], m["name"] = True, m.get("name") or (tc.get("function") or {}).get("name")
+        for tc in (st["output"] or {}).get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("id"):
+                asked[tc["id"]] = tc
+
+
 def build_session(session, calls, signals, actions):
     steps, seen, system_prompt, tools = [], [], None, set()
     by_call_sig, by_call_act = {}, {}
@@ -108,6 +127,7 @@ def build_session(session, calls, signals, actions):
             "signals": by_call_sig.pop(c["id"], []), "actions": by_call_act.pop(c["id"], []),
         })
         seen = msgs + ([answer] if answer else [])
+    pair_tool_results(steps)
     first = calls[0]
     labels = _j(first.get("labels")) if isinstance(first.get("labels"), str) else first.get("labels")
     return {

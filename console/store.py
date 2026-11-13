@@ -17,6 +17,8 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 
+from .transcript import build_session, parse_response
+
 LEVELS = ("info", "warning", "block")
 SYSTEM_AGENTS = tuple(a.strip() for a in os.environ.get("CONSOLE_SYSTEM_AGENTS", "firewall,console-").split(",") if a.strip())
 
@@ -47,6 +49,7 @@ class Filters:
         self.system = (g("system") or "0") in ("1", "true", "yes")
 
     def where(self, alias="f"):
+        """SQL WHERE for the facts table (alias f) or for sig / act (which have no dept: matched via the user)."""
         sql, args = [], []
         if self.since:
             sql.append(f"{alias}.day >= ?"); args.append(self.since)
@@ -55,7 +58,8 @@ class Filters:
         if self.user:
             sql.append(f"{alias}.user = ?"); args.append(self.user)
         if self.dept:
-            sql.append(f"{alias}.dept = ?"); args.append(self.dept)
+            sql.append(f"{alias}.dept = ?" if alias == "f" else
+                       f"{alias}.user IN (SELECT DISTINCT user FROM facts WHERE dept = ?)"); args.append(self.dept)
         if not self.system:
             sql.append(f"{alias}.is_system = 0")
         return (" WHERE " + " AND ".join(sql)) if sql else "", args
@@ -108,10 +112,9 @@ class Store:
             if labels != "NULL":
                 dept_parts += [f"json_extract({labels}, '$.dept')", f"json_extract({labels}, '$.department')"]
             dept_parts.append("'(none)'")
-            tok = lambda k: (f"COALESCE({k}, json_extract(usage, '$.{k}'))" if k in self.cols  # noqa: E731
-                             else f"json_extract(usage, '$.{k}')")
-            cost = (f"COALESCE(cost_usd, json_extract(usage, '$.cost'), 0)" if "cost_usd" in self.cols
-                    else "COALESCE(json_extract(usage, '$.cost'), 0)")
+            usage = (lambda k: f"json_extract(usage, '$.{k}')") if "usage" in self.cols else (lambda k: "NULL")
+            tok = lambda k: f"COALESCE({self._c(k)}, {usage(k)})"  # noqa: E731
+            cost = f"COALESCE({self._c('cost_usd')}, {usage('cost')}, 0)"
             n_tools = "json_array_length(json_extract(request, '$.tools'))"
             rows = self.db.execute(f"""
                 SELECT id, ts, COALESCE({', '.join(user_parts)}) AS user, COALESCE({', '.join(dept_parts)}) AS dept,
@@ -120,7 +123,7 @@ class Store:
                        {tok('prompt_tokens')} AS pt, {tok('completion_tokens')} AS ct, {tok('total_tokens')} AS tt,
                        {cost} AS cost, {self._c('firewall_level')} AS fw,
                        {f"json_extract({labels}, '$.kind')" if labels != "NULL" else "NULL"} AS kind,
-                       CASE WHEN json_valid({self._c('request', "''")}) THEN {n_tools} END AS tools,
+                       {f"CASE WHEN json_valid(request) THEN {n_tools} END" if "request" in self.cols else "NULL"} AS tools,
                        {self._c('error')} AS error
                 FROM calls WHERE id > ? ORDER BY id""", (self.last_id,)).fetchall()
             out = []
@@ -184,6 +187,9 @@ class Store:
                       " AND user != 'anonymous' LIMIT 1"):
                 return "X-Agent-User"
             return "API key"
+        if "labels" in self.cols and self.q("SELECT 1 FROM calls WHERE json_valid(labels)"
+                                            " AND json_extract(labels, '$.user') IS NOT NULL LIMIT 1"):
+            return "labels.user"
         if "key_id" in self.cols and self.q("SELECT 1 FROM calls WHERE key_id IS NOT NULL LIMIT 1"):
             return "API key"
         return "X-Agent-Id"
@@ -192,8 +198,7 @@ class Store:
         """Firewall findings (signals) by level, honouring the filter; with `by`, grouped by that column."""
         if not self.has_signals:
             return {} if by is None else []
-        w, a = Filters.where(f, "s")
-        w = w.replace("s.dept = ?", "s.user IN (SELECT DISTINCT user FROM facts WHERE dept = ?)")
+        w, a = f.where("s")
         sel = f"{by} AS k, " if by else ""
         rows = self.q(f"SELECT {sel}level, COUNT(*) AS n FROM sig s{w} GROUP BY {'k, ' if by else ''}level", a)
         if by is None:
@@ -333,7 +338,6 @@ class Store:
         counts = {}
         for r in self.q(f"SELECT c.response FROM calls c JOIN facts f ON f.id = c.id{w} AND f.finish = 'tool_calls'"
                         if w else "SELECT c.response FROM calls c JOIN facts f ON f.id = c.id WHERE f.finish = 'tool_calls'", a):
-            from .transcript import parse_response
             msg = parse_response(r["response"]).get("message") or {}
             for tc in msg.get("tool_calls") or []:
                 name = (tc.get("function") or {}).get("name") or "?"
@@ -341,7 +345,6 @@ class Store:
         return sorted(({"tool": k, "calls": v} for k, v in counts.items()), key=lambda x: -x["calls"])
 
     def session(self, session):
-        from .transcript import build_session
         calls = self.q("SELECT c.*, f.user, f.dept, f.total_tokens, f.prompt_tokens, f.completion_tokens, f.cost AS cost"
                        " FROM calls c JOIN facts f ON f.id = c.id WHERE f.session = ? ORDER BY c.id", (session,))
         if not calls:
@@ -366,8 +369,7 @@ class Store:
         """Every finding, newest first, plus the counts the firewall page charts."""
         if not self.has_signals:
             return {"enabled": False, "events": [], "topics": [], "actions": []}
-        w, a = Filters.where(f, "s")
-        w = w.replace("s.dept = ?", "s.user IN (SELECT DISTINCT user FROM facts WHERE dept = ?)")
+        w, a = f.where("s")
         extra, ea = [], []
         if level:
             extra.append("s.level = ?"); ea.append(level)
@@ -379,8 +381,7 @@ class Store:
         topics = self.q(f"SELECT s.topic, s.level, COUNT(*) AS n, COUNT(DISTINCT s.user) AS users FROM sig s{w}"
                         " GROUP BY s.topic, s.level", a + ea)
         detectors = self.q(f"SELECT s.detector, s.level, COUNT(*) AS n FROM sig s{w} GROUP BY s.detector, s.level", a + ea)
-        aw, aa = Filters.where(f, "x")
-        aw = aw.replace("x.dept = ?", "x.user IN (SELECT DISTINCT user FROM facts WHERE dept = ?)")
+        aw, aa = f.where("x")
         actions = self.q(f"SELECT x.* FROM act x{aw} ORDER BY x.ts DESC LIMIT ?", aa + [limit]) if self.has_actions else []
         return {"enabled": True, "events": events, "topics": topics, "detectors": detectors, "actions": actions}
 

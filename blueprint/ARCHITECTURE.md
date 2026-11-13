@@ -39,10 +39,15 @@ No third-party Python packages. The browser loads only files from `web/` (Three.
    `request` / `response`.
 4. `transcript.build_session` walks a session's calls in order. Because each request repeats the
    whole conversation, it diffs the request's messages against the previous request plus its answer
-   and keeps only what is new.
+   and keeps only what is new. `pair_tool_results` then puts each tool result (sent in call N+1) under
+   the tool call that asked for it (in call N's answer), so a tool call reads as one card.
 5. The UI is a hash router (`#/u/<user>?from=…`). Filters live in the URL, so the breadcrumb and the
    browser's back button are the drill-up. A stale response (the user clicked on) is dropped.
-6. The galaxy is loaded on demand (`import("./galaxy.js")`) and torn down when you leave it.
+6. The session page draws a waterfall strip (`charts.js: waterfall`) and tags every message, tool card
+   and finding block as a *beat*; replay (`app.js: makeReplay`) hides the beats and reveals them one by
+   one, moving the strip's playhead. A one-day view asks `/api/sessions` for that day and draws the
+   swimlanes (`charts.js: timeline`). Both are client-side over existing endpoints.
+7. The galaxy is loaded on demand (`import("./galaxy.js")`) and torn down when you leave it.
 
 ## Data model
 The log schema is the owners' (`K-log-schema@1/@2`, SPEC §3). The console's own working tables live
@@ -75,6 +80,11 @@ only in memory:
 | R-018 | `console/server.py: unpack_samples, main` |
 | R-019, R-020 | `console/server.py: make_handler.static, api` |
 | R-021, R-023, R-024 | `web/app.js: viewGlobal, viewUser, viewSession, bucketClick, crumbs` |
+| R-025 | `console/transcript.py: pair_tool_results`; `web/app.js: toolHtml` |
+| R-026 | `web/charts.js: waterfall`; `web/app.js: viewSession` |
+| R-027 | `web/app.js: makeReplay` (+ keydown handler); `web/app.css` `.beat`, `.replay-bar` |
+| R-028 | `web/charts.js: timeline`; `web/app.js: dayTimeline, timelineCard` |
+| R-029 | `web/app.js: marker, sigHtml` |
 | R-101 | `facts` index; aggregates never parse JSON |
 | R-104 | `web/app.css` tokens + `prefers-color-scheme`; `web/galaxy.js` `reduced` |
 

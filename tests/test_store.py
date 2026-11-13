@@ -73,6 +73,14 @@ class TestSchema(Base):
         s = Store(p)
         self.assertEqual({u["user"] for u in s.users(Filters())}, {"key:ab12cd34", "key:99999999"})
         self.assertEqual(s.identity_source(), "API key")
+        p = os.path.join(self.tmp, "labels.db")   # an older proxy that put X-Agent-User into labels
+        db = sqlite3.connect(p)
+        db.execute("CREATE TABLE calls (id INTEGER PRIMARY KEY, ts TEXT, agent TEXT, session TEXT, labels TEXT)")
+        db.execute("""INSERT INTO calls VALUES (1, '2026-10-26T09:00:00Z', 'bot', 'x', '{"user": "tom"}')""")
+        db.commit()
+        s = Store(p)
+        self.assertEqual({u["user"] for u in s.users(Filters())}, {"tom"})
+        self.assertEqual(s.identity_source(), "labels.user")
 
     def test_R004_department(self):
         """Proves: R-004. dept from calls.dept, else labels.dept / labels.department."""
@@ -158,6 +166,15 @@ class TestDrillDown(Base):
         self.assertEqual([m["role"] for m in second["input"]], ["tool"])
         self.assertEqual(second["output"]["content"], "Refunds within 30 days.")
         self.assertEqual([s["level"] for s in second["signals"]], ["info"])
+
+    def test_R025_tool_results_sit_under_the_call_that_asked_for_them(self):
+        """Proves: R-025. The result sent back in call 3 is attached to the tool call made in call 2's answer."""
+        first, second = self.stores["v2"].session("s2")["steps"]
+        tc = first["output"]["tool_calls"][0]
+        self.assertEqual(tc["result"], "{\"policy\": \"30 days\"}")
+        self.assertEqual(tc["result_in"], 3)
+        self.assertTrue(second["input"][0]["paired"])
+        self.assertEqual(second["input"][0]["name"], "kb_search")
 
     def test_R010_firewall_events_attach_to_their_call(self):
         d = self.stores["v2"].session("s3")

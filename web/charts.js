@@ -1,4 +1,5 @@
-/* Small SVG charts with no dependencies: stacked bars over time, heatmap, horizontal bars, sparkline.
+/* Small SVG charts with no dependencies: stacked bars over time, heatmap, horizontal bars, sparkline,
+   a day timeline (users x sessions) and a session waterfall (calls and the tool time between them).
    Every chart takes plain arrays and an onClick so a bar is also a drill-down link. */
 (function () {
   const NS = "http://www.w3.org/2000/svg";
@@ -122,9 +123,89 @@
     }).join("")}</svg>`;
   }
 
+
+  /* Time axis helpers for the timelines: epoch ms from "YYYY-MM-DDTHH:MM:SSZ", and round tick steps. */
+  const ms = (ts) => Date.parse(ts.length === 20 ? ts : ts.slice(0, 19) + "Z");
+  const hhmm = (t) => new Date(t).toISOString().slice(11, 16);
+  function ticks(t0, t1, width) {
+    const steps = [60e3, 300e3, 600e3, 900e3, 1800e3, 3600e3, 7200e3, 10800e3, 21600e3];
+    const step = steps.find((s) => (t1 - t0) / s <= Math.max(2, width / 90)) || 43200e3;
+    const out = [];
+    for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) out.push(t);
+    return out;
+  }
+
+  /* Day timeline: one lane per user, one bar per session (start -> end), coloured by its worst firewall level.
+     lanes: [{key, label, color, items: [{start, end, level, title, ...}]}] */
+  function timeline(container, lanes, { levelColor, onClick, tipHtml } = {}) {
+    container.innerHTML = "";
+    const all = lanes.flatMap((l) => l.items);
+    if (!all.length) { container.innerHTML = '<div class="empty">No sessions in this range.</div>'; return; }
+    let t0 = Math.min(...all.map((i) => ms(i.start))), t1 = Math.max(...all.map((i) => ms(i.end)));
+    const pad = Math.max(60e3, (t1 - t0) * 0.02); t0 -= pad; t1 += pad;
+    const W = Math.max(container.clientWidth || 600, 320), lh = 22, m = { l: 150, r: 10, t: 6, b: 22 };
+    const H = m.t + lanes.length * lh + m.b, iw = W - m.l - m.r, X = (t) => m.l + ((t - t0) / (t1 - t0)) * iw;
+    const svg = el("svg", { class: "chart timeline", viewBox: `0 0 ${W} ${H}`, role: "img" }, container);
+    const g = el("g", { class: "grid" }, svg);
+    ticks(t0, t1, iw).forEach((t) => {
+      el("line", { x1: X(t), x2: X(t), y1: m.t, y2: H - m.b }, g);
+      el("text", { x: X(t), y: H - 6, "text-anchor": "middle" }, svg).textContent = hhmm(t);
+    });
+    lanes.forEach((lane, i) => {
+      const y = m.t + i * lh;
+      if (i % 2) el("rect", { x: 0, y, width: W, height: lh, class: "lane-alt" }, svg);
+      el("circle", { cx: 8, cy: y + lh / 2, r: 4, fill: lane.color }, svg);
+      const t = el("text", { x: 18, y: y + lh / 2 + 4, class: "lane-label" }, svg);
+      t.textContent = lane.label.length > 20 ? lane.label.slice(0, 19) + "…" : lane.label;
+      lane.items.forEach((it) => {
+        const x = X(ms(it.start)), w = Math.max(4, X(ms(it.end)) - x);
+        const r = el("rect", { x, y: y + 4, width: w, height: lh - 8, rx: 3, class: "seg-bar" + (it.level ? " lv" : ""),
+          fill: levelColor(it.level) }, svg);
+        r.addEventListener("mousemove", (ev) => tip.show(ev, tipHtml(it, lane)));
+        r.addEventListener("mouseleave", tip.hide);
+        if (onClick) r.addEventListener("click", () => { tip.hide(); onClick(it, lane); });
+      });
+    });
+  }
+
+  /* One session as a strip: each LLM call is a bar (its latency), the gaps between are the agent running
+     tools; diamonds mark tool calls. steps: [{call_id, ts, duration_ms, level, tools: [name]}]. Returns
+     {setPlayhead(index)} so replay can move a cursor along it. */
+  function waterfall(container, steps, { levelColor, onClick, tipHtml } = {}) {
+    container.innerHTML = "";
+    if (!steps.length) return { setPlayhead() {} };
+    const starts = steps.map((s) => ms(s.ts)), ends = steps.map((s, i) => starts[i] + (s.duration_ms || 0));
+    const t0 = starts[0], t1 = Math.max(t0 + 1000, ...ends);
+    const W = Math.max(container.clientWidth || 600, 320), H = 64, m = { l: 8, r: 8, t: 14, b: 20 }, iw = W - m.l - m.r;
+    const X = (t) => m.l + ((t - t0) / (t1 - t0)) * iw, y = m.t, bh = H - m.t - m.b;
+    const svg = el("svg", { class: "chart waterfall", viewBox: `0 0 ${W} ${H}`, role: "img" }, container);
+    const g = el("g", { class: "grid" }, svg);
+    ticks(t0, t1, iw).forEach((t) => { el("line", { x1: X(t), x2: X(t), y1: y, y2: y + bh }, g);
+      el("text", { x: X(t), y: H - 5, "text-anchor": "middle" }, svg).textContent = hhmm(t); });
+    el("line", { x1: m.l, x2: W - m.r, y1: y + bh / 2, y2: y + bh / 2, class: "rail" }, svg);
+    const head = el("line", { x1: 0, x2: 0, y1: 2, y2: y + bh + 2, class: "playhead", visibility: "hidden" }, svg);
+    steps.forEach((s, i) => {
+      const x = X(starts[i]), w = Math.max(3, X(ends[i]) - x);
+      const grp = el("g", { class: "bar" }, svg);
+      el("rect", { x, y, width: w, height: bh, rx: 3, fill: levelColor(s.level) }, grp);
+      (s.tools || []).forEach((_, k) => el("path", { d: `M${x + w + 3 + k * 5},${y - 6} l3,3 l-3,3 l-3,-3z`, class: "tooltick" }, grp));
+      el("rect", { x: x - 2, y: 0, width: w + 4, height: H - m.b, fill: "transparent" }, grp);
+      grp.addEventListener("mousemove", (ev) => tip.show(ev, tipHtml(s, i)));
+      grp.addEventListener("mouseleave", tip.hide);
+      if (onClick) grp.addEventListener("click", () => { tip.hide(); onClick(s, i); });
+    });
+    const groups = [...svg.querySelectorAll("g.bar")];
+    return { setPlayhead(i, atStart) {   // i = call index; atStart: at the call's request, else at its answer
+      groups.forEach((gr, k) => gr.classList.toggle("on", k === i));
+      if (i == null || i < 0) { head.setAttribute("visibility", "hidden"); return; }
+      const x = atStart ? X(starts[i]) : X(ends[Math.min(i, steps.length - 1)]);
+      head.setAttribute("x1", x); head.setAttribute("x2", x); head.setAttribute("visibility", "visible");
+    } };
+  }
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  window.Charts = { bars, heatmap, hbars, spark, fmt, esc, tip, css, shortDate };
+  window.Charts = { bars, heatmap, hbars, spark, timeline, waterfall, fmt, esc, tip, css, shortDate };
 })();
